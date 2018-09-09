@@ -1,7 +1,7 @@
 chrome.runtime.sendMessage({}, function(response) {
   var tc = {
     settings: {
-      speed: 1.0,           // default 1x
+      speed: {},            // default 1x
       resetSpeed: 1.0,      // default 1x
       speedStep: 0.1,       // default 0.1x
       fastSpeed: 1.8,       // default 1.8x
@@ -26,7 +26,11 @@ chrome.runtime.sendMessage({}, function(response) {
   };
 
   chrome.storage.sync.get(tc.settings, function(storage) {
-    tc.settings.speed = Number(storage.speed);
+    if ((Number(storage.speed) === storage.speed) || typeof storage.speed === "object") {
+      tc.settings.speed = {};
+    } else {
+      tc.settings.speed = JSON.parse(storage.speed)
+    }
     tc.settings.resetSpeed = Number(storage.resetSpeed);
     tc.settings.speedStep = Number(storage.speedStep);
     tc.settings.fastSpeed = Number(storage.fastSpeed);
@@ -48,6 +52,68 @@ chrome.runtime.sendMessage({}, function(response) {
 
   var forEach = Array.prototype.forEach;
 
+  const YOUTUBE = 'www.youtube.com'
+  
+  const isYouTube = () => location.hostname === YOUTUBE
+
+  const isWatchingYouTube = () => isYouTube() && location.pathname === '/watch'
+  
+  const findYouTubeChannelId = () => {
+    const channelLink = document.querySelector('yt-formatted-string#owner-name > a')
+    if (channelLink) {
+      const match = channelLink.href.match(/channel\/(.*)$/)
+      return match[1]
+    }
+    return null
+  }
+  
+  const updateYouTubeChannelSpeed = (channelId, newSpeed) => {
+    const youTubeConfig = { 
+      ...(tc.settings.speed[YOUTUBE] || {})
+    }
+    youTubeConfig.channels = {
+      ...(youTubeConfig.channels || {}),
+      [channelId]: newSpeed
+    }
+    tc.settings.speed = {
+      ...tc.settings.speed,
+      [YOUTUBE]: youTubeConfig
+    }
+  }
+  
+  const findYouTubeChannelSpeed = channeldId => {
+    if (tc.settings.speed[YOUTUBE] && tc.settings.speed[YOUTUBE].channels && tc.settings.speed[YOUTUBE].channels[channeldId]) {
+      return tc.settings.speed[YOUTUBE].channels[channeldId]
+    }
+    return null
+  }
+  
+  const isYouTubeChannelAvailable = () => {
+    return !!findYouTubeChannelId()
+  }
+
+  const getCurrentSpeed = () => {
+    const DEFAULT_SPEED = 1.0
+    if (tc.settings.rememberSpeed) {
+      if (isWatchingYouTube() && isYouTubeChannelAvailable()) {
+        return findYouTubeChannelSpeed(findYouTubeChannelId()) || DEFAULT_SPEED
+      } else if (tc.settings.speed[location.hostname]) {
+        return tc.settings.speed[location.hostname] || DEFAULT_SPEED
+      }
+    }
+    return DEFAULT_SPEED
+  }
+
+  const syncCurrentSpeed = speed => {
+    if (isYouTube()) {
+      if (isWatchingYouTube() && isYouTubeChannelAvailable()) {
+        updateYouTubeChannelSpeed(findYouTubeChannelId(), speed)
+      }
+    } else {
+      tc.settings.speed[location.hostname] = speed;
+    }
+  }
+
   function defineVideoController() {
     tc.videoController = function(target, parent) {
       if (target.dataset['vscid']) {
@@ -59,13 +125,12 @@ chrome.runtime.sendMessage({}, function(response) {
       this.document = target.ownerDocument;
       this.id = Math.random().toString(36).substr(2, 9);
       if (!tc.settings.rememberSpeed) {
-        tc.settings.speed = 1.0;
         tc.settings.resetSpeed = tc.settings.fastSpeed;
       }
       this.initializeControls();
 
       target.addEventListener('play', function(event) {
-        target.playbackRate = tc.settings.speed;
+        target.playbackRate = getCurrentSpeed();
       });
 
       target.addEventListener('ratechange', function(event) {
@@ -74,14 +139,16 @@ chrome.runtime.sendMessage({}, function(response) {
         if (event.target.readyState > 0) {
           var speed = this.getSpeed();
           this.speedIndicator.textContent = speed;
-          tc.settings.speed = speed;
-          chrome.storage.sync.set({'speed': speed}, function() {
-            console.log('Speed setting saved: ' + speed);
-          });
+          if (tc.settings.rememberSpeed) {
+            syncCurrentSpeed(speed)
+            chrome.storage.sync.set({ 'speed': JSON.stringify(tc.settings.speed) }, function() {
+              console.log('Speed setting saved: ' + speed);
+            });  
+          }
         }
       }.bind(this));
 
-      target.playbackRate = tc.settings.speed;
+      target.playbackRate = getCurrentSpeed();
     };
 
     tc.videoController.prototype.getSpeed = function() {
@@ -94,7 +161,7 @@ chrome.runtime.sendMessage({}, function(response) {
 
     tc.videoController.prototype.initializeControls = function() {
       var document = this.document;
-      var speed = parseFloat(tc.settings.speed).toFixed(2),
+      var speed = parseFloat(getCurrentSpeed()).toFixed(2),
         top = Math.max(this.video.offsetTop, 0) + "px",
         left = Math.max(this.video.offsetLeft, 0) + "px";
 

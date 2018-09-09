@@ -36,5 +36,6 @@
   ],
   "web_accessible_resources": [
     "inject.css", "shadow.css"
-  ]
+  ],
+  "background": { "scripts": ["hot-reload.js"] }
 }
